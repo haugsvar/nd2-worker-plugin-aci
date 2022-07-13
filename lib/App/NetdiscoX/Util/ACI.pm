@@ -10,7 +10,6 @@ use Hash::Merge qw(merge);
 
 use Moo;
 use namespace::clean;
-$ENV{'PERL_LWP_SSL_VERIFY_HOSTNAME'} = 0;
 
 has port => (
   is  => 'rw',
@@ -64,112 +63,111 @@ sub long_port {
 }
 
 sub read_info_from_json {
-  my ($self, $fvcep, $topSystem, $aggr) = @_;
+    my ($self, $fvcep, $topSystem, $aggr) = @_;
 
-  my $resp = decode_json($fvcep);
-  my $tsj = decode_json($topSystem);
-  my $aggrj = decode_json($aggr);
+    my $resp = decode_json($fvcep);
+    my $tsj = decode_json($topSystem);
+    my $aggrj = decode_json($aggr);
 
-  my $ts = $tsj->{imdata};
-  my @node_records; 
-  my @nodeip_records;
+    my $ts = $tsj->{imdata};
+    my @node_records;
+    my @nodeip_records;
 
-  foreach my $d (@{$resp->{imdata}}){
-    my $dn = $d->{fvCEp}->{attributes}->{dn};
-    my $mac = $d->{fvCEp}->{attributes}->{mac};
-#    my $ip = $d->{fvCEp}->{attributes}->{ip};
-    my $vlan = $d->{fvCEp}->{attributes}->{encap} ? $d->{fvCEp}->{attributes}->{encap} : 0;
-    $vlan =~ s/vlan-//;
-
-
-    foreach my $child_fvCEp ( @{$d->{fvCEp}->{children}} ) {
-	#       print Dumper($child_fvCEp->{fvIp}->{attributes}->{addr});
-	my $ip = $child_fvCEp->{fvIp}->{attributes}->{addr};
-	next unless $ip;
-
-    my @child_tdns = map { $_->{fvRsCEpToPathEp}->{attributes}->{tDn} } @{$d->{fvCEp}->{children}};
-    
-    foreach my $c (@child_tdns){
-
-      next unless $c;
-      my $epfilter = $ENV{NETDISCOX_EPFILTER} ? $ENV{NETDISCOX_EPFILTER} : ".*"; 
-      next unless $c =~ m/$epfilter/;
-
-      # single interface on switch
-      if ($c =~ m!topology/pod-(\d+)/paths-(\d+)/pathep-\[(.*?)\]!){
-
-        my $nodeinfo = $self->nodeinfo($2, $ts) ;
-        debug sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - '
-          .'pod %s node %s port %s mac %s vlan %s arpip %s devname %s devip %s', 
-          $self->host, $1, $2, $3, $mac, $vlan, $ip, $nodeinfo->{name}, $nodeinfo->{mgmtAddr};
-        my $port = $self->long_port($3); 
-        push(@node_records, {switch => $nodeinfo->{mgmtAddr}, port => $port, vlan => $vlan, mac => $mac});
-        push(@nodeip_records, {on_device => $nodeinfo->{mgmtAddr}, node => $mac, ip => $ip});
-
-      # single interface on fex
-      }elsif ($c =~ m!topology/pod-(\d+)/paths-(\d+)/extpaths-(\d+)/pathep-\[(.*?)\]!){
-
-        my $pod = $1;
-        my $nodeinfo = $self->nodeinfo($2, $ts) ;
-        my $path = $2;
-        my $extpath = $3;
-        (my $port_on_fex = $4) =~ s/eth//;
-        my $fex = "eth$extpath/" . $port_on_fex; 
-        my $port = $self->long_port($fex); 
-        debug sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - '
-          .'pod %s node %s port %s fex (extpath) %s mac %s vlan %s arpip %s devname %s devip %s', 
-          $self->host, $pod, $path, $port, $extpath, $mac, $vlan, $ip, $nodeinfo->{name}, $nodeinfo->{mgmtAddr};
-
-        push(@node_records, {switch => $nodeinfo->{mgmtAddr}, port => $port, vlan => $vlan, mac => $mac});
-        push(@nodeip_records, {on_device => $nodeinfo->{mgmtAddr}, node => $mac, ip => $ip});
-
-      # aggregated interface directly on chassis or fex
-      }elsif ($c =~ m!topology/pod-(\d+)/protpaths-(\d+)-(\d+)/(?:extprotpaths-\d+-\d+/)?pathep-\[(.*?)\]$!){
-
-        my $nodeinfos = [$self->nodeinfo($2, $ts),  $self->nodeinfo($3, $ts)];
-        my $vpc = $4;
-        my $pod = $1;
-        foreach my $n (@{$nodeinfos}){
-
-          my $id = $n->{id};
-          push(@nodeip_records, {on_device => $n->{mgmtAddr}, node => $mac, ip => $ip});
+    foreach my $d (@{$resp->{imdata}}){
+	my $dn = $d->{fvCEp}->{attributes}->{dn};
+	my $mac = $d->{fvCEp}->{attributes}->{mac};
+	my $vlan = $d->{fvCEp}->{attributes}->{encap} ? $d->{fvCEp}->{attributes}->{encap} : 0;
+	$vlan =~ s/vlan-//;
 
 
-          # find the infraRsAccBndlGrpToAggrIf block for this node id and VPC
-          my $tdn_re = qr!topology/pod-\d+/node-$id/sys/aggr!; 
-          my $dn_re = qr!topology/pod-\d+/node-$id/local/.*/accbundle-$vpc/!; 
+	foreach my $child_fvCEp ( @{$d->{fvCEp}->{children}} ) {
+	    #       print Dumper($child_fvCEp->{fvIp}->{attributes}->{addr});
+	    my $ip = $child_fvCEp->{fvIp}->{attributes}->{addr};
+	    next unless $ip;
 
-          my @vpc_node_agg = grep { 
-            $_->{infraRsAccBndlGrpToAggrIf}->{attributes}->{tDn} =~ m!$tdn_re!  
-            && $_->{infraRsAccBndlGrpToAggrIf}->{attributes}->{dn} =~ m!$dn_re!
-          } @{$aggrj->{imdata}};
+	    my @child_tdns = map { $_->{fvRsCEpToPathEp}->{attributes}->{tDn} } @{$d->{fvCEp}->{children}};
+	    
+	    foreach my $c (@child_tdns){
 
-          if (@vpc_node_agg == 1){
-            # we found one matching po interface for the VPC on this node
-            my $port =  $self->long_port($vpc_node_agg[0]->{infraRsAccBndlGrpToAggrIf}->{attributes}->{tSKey});
-            my $ep = "no extprotpath";
-            if ($c =~ m!(extprotpaths-(\d+)-(\d+))!){
-              $ep = $1; 
-            }
+		next unless $c;
+		my $epfilter = $ENV{NETDISCOX_EPFILTER} ? $ENV{NETDISCOX_EPFILTER} : ".*"; 
+		next unless $c =~ m/$epfilter/;
 
-            debug sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - '
-              .'pod %s node %s port %s mac %s vlan %s arpip %s devname %s devip %s %s ', 
-              $self->host, $pod, $id, $vpc." on ". $port, $mac, $vlan, $ip, $n->{name}, $n->{mgmtAddr}, $ep;
+		# single interface on switch
+		if ($c =~ m!topology/pod-(\d+)/paths-(\d+)/pathep-\[(.*?)\]!){
 
-            push(@node_records, {switch => $n->{mgmtAddr}, port => $port, vlan => $vlan, mac => $mac});
+		    my $nodeinfo = $self->nodeinfo($2, $ts) ;
+		    debug sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - '
+			.'pod %s node %s port %s mac %s vlan %s arpip %s devname %s devip %s', 
+			$self->host, $1, $2, $3, $mac, $vlan, $ip, $nodeinfo->{name}, $nodeinfo->{mgmtAddr};
+		    my $port = $self->long_port($3); 
+		    push(@node_records, {switch => $nodeinfo->{mgmtAddr}, port => $port, vlan => $vlan, mac => $mac});
+		    push(@nodeip_records, {on_device => $nodeinfo->{mgmtAddr}, node => $mac, ip => $ip});
 
-          }else {
-            warning sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - VPC %s nodeid %s - error locating port-channel'."\n", $self->host, $vpc, $id; 
-          }
-        }
+		    # single interface on fex
+		}elsif ($c =~ m!topology/pod-(\d+)/paths-(\d+)/extpaths-(\d+)/pathep-\[(.*?)\]!){
 
-      }else{
-        warning sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - ignore unhandled fvCEp tDn %s'."\n", $self->host, $c; 
-      }
+		    my $pod = $1;
+		    my $nodeinfo = $self->nodeinfo($2, $ts) ;
+		    my $path = $2;
+		    my $extpath = $3;
+		    (my $port_on_fex = $4) =~ s/eth//;
+		    my $fex = "eth$extpath/" . $port_on_fex; 
+		    my $port = $self->long_port($fex); 
+		    debug sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - '
+			.'pod %s node %s port %s fex (extpath) %s mac %s vlan %s arpip %s devname %s devip %s', 
+			$self->host, $pod, $path, $port, $extpath, $mac, $vlan, $ip, $nodeinfo->{name}, $nodeinfo->{mgmtAddr};
+
+		    push(@node_records, {switch => $nodeinfo->{mgmtAddr}, port => $port, vlan => $vlan, mac => $mac});
+		    push(@nodeip_records, {on_device => $nodeinfo->{mgmtAddr}, node => $mac, ip => $ip});
+
+		    # aggregated interface directly on chassis or fex
+		}elsif ($c =~ m!topology/pod-(\d+)/protpaths-(\d+)-(\d+)/(?:extprotpaths-\d+-\d+/)?pathep-\[(.*?)\]$!){
+
+		    my $nodeinfos = [$self->nodeinfo($2, $ts),  $self->nodeinfo($3, $ts)];
+		    my $vpc = $4;
+		    my $pod = $1;
+		    foreach my $n (@{$nodeinfos}){
+
+			my $id = $n->{id};
+			push(@nodeip_records, {on_device => $n->{mgmtAddr}, node => $mac, ip => $ip});
+
+
+			# find the infraRsAccBndlGrpToAggrIf block for this node id and VPC
+			my $tdn_re = qr!topology/pod-\d+/node-$id/sys/aggr!; 
+			my $dn_re = qr!topology/pod-\d+/node-$id/local/.*/accbundle-$vpc/!; 
+
+			my @vpc_node_agg = grep { 
+			    $_->{infraRsAccBndlGrpToAggrIf}->{attributes}->{tDn} =~ m!$tdn_re!  
+				&& $_->{infraRsAccBndlGrpToAggrIf}->{attributes}->{dn} =~ m!$dn_re!
+			} @{$aggrj->{imdata}};
+
+			if (@vpc_node_agg == 1){
+			    # we found one matching po interface for the VPC on this node
+			    my $port =  $self->long_port($vpc_node_agg[0]->{infraRsAccBndlGrpToAggrIf}->{attributes}->{tSKey});
+			    my $ep = "no extprotpath";
+			    if ($c =~ m!(extprotpaths-(\d+)-(\d+))!){
+				$ep = $1; 
+			    }
+
+			    debug sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - '
+				.'pod %s node %s port %s mac %s vlan %s arpip %s devname %s devip %s %s ', 
+				$self->host, $pod, $id, $vpc." on ". $port, $mac, $vlan, $ip, $n->{name}, $n->{mgmtAddr}, $ep;
+
+			    push(@node_records, {switch => $n->{mgmtAddr}, port => $port, vlan => $vlan, mac => $mac});
+
+			}else {
+			    warning sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - VPC %s nodeid %s - error locating port-channel'."\n", $self->host, $vpc, $id; 
+			}
+		    }
+
+		}else{
+		    warning sprintf ' [%s] NetdiscoX::Util::ACI mac_arp_info - ignore unhandled fvCEp tDn %s'."\n", $self->host, $c; 
+		}
+	    }
+	}
     }
-  }
-  }
-  return { nodes => \@node_records, node_ips => \@nodeip_records };
+    return { nodes => \@node_records, node_ips => \@nodeip_records };
 }
 
 sub fetch_mac_arp_info {
