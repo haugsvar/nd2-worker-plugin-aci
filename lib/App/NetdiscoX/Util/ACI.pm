@@ -10,6 +10,7 @@ use Hash::Merge qw(merge);
 
 use Moo;
 use namespace::clean;
+$ENV{'PERL_LWP_SSL_VERIFY_HOSTNAME'} = 0;
 
 has port => (
   is  => 'rw',
@@ -71,14 +72,20 @@ sub read_info_from_json {
 
   my $ts = $tsj->{imdata};
   my @node_records; 
-  my @nodeip_records; 
+  my @nodeip_records;
 
   foreach my $d (@{$resp->{imdata}}){
     my $dn = $d->{fvCEp}->{attributes}->{dn};
     my $mac = $d->{fvCEp}->{attributes}->{mac};
-    my $ip = $d->{fvCEp}->{attributes}->{ip};
+#    my $ip = $d->{fvCEp}->{attributes}->{ip};
     my $vlan = $d->{fvCEp}->{attributes}->{encap} ? $d->{fvCEp}->{attributes}->{encap} : 0;
     $vlan =~ s/vlan-//;
+
+
+    foreach my $child_fvCEp ( @{$d->{fvCEp}->{children}} ) {
+	#       print Dumper($child_fvCEp->{fvIp}->{attributes}->{addr});
+	my $ip = $child_fvCEp->{fvIp}->{attributes}->{addr};
+	next unless $ip;
 
     my @child_tdns = map { $_->{fvRsCEpToPathEp}->{attributes}->{tDn} } @{$d->{fvCEp}->{children}};
     
@@ -161,7 +168,7 @@ sub read_info_from_json {
       }
     }
   }
-
+  }
   return { nodes => \@node_records, node_ips => \@nodeip_records };
 }
 
